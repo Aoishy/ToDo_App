@@ -3,6 +3,10 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 const connectDB = require('./config/db');
 const todoRoutes = require('./routes/todoRoutes');
+const authRoutes = require('./routes/authRoutes');
+const messageRoutes = require('./routes/messageRoutes');
+const userRoutes = require('./routes/userRoutes');
+const teamRoutes = require('./routes/teamRoutes');
 
 // Load environment variables
 dotenv.config();
@@ -24,12 +28,20 @@ app.get('/', (req, res) => {
     message: 'Welcome to Todo API',
     version: '1.0.0',
     endpoints: {
+      auth: '/api/auth',
       todos: '/api/todos',
+      messages: '/api/messages',
+      users: '/api/users',
+      teams: '/api/teams',
     },
   });
 });
 
+app.use('/api/auth', authRoutes);
 app.use('/api/todos', todoRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/teams', teamRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

@@ -2,6 +2,11 @@ const mongoose = require('mongoose');
 
 const todoSchema = new mongoose.Schema(
   {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
     title: {
       type: String,
       required: [true, 'Please add a title'],
@@ -21,6 +26,17 @@ const todoSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    priority: {
+      type: String,
+      enum: ['low', 'medium', 'high'],
+      default: null,
+    },
+    assignedTo: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
   },
   {
     timestamps: true,

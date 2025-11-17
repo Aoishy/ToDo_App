@@ -1,13 +1,23 @@
 const express = require('express');
 const router = express.Router();
 const Todo = require('../models/Todo');
+const { protect } = require('../middleware/auth');
 
 // @route   GET /api/todos
-// @desc    Get all todos
-// @access  Public
-router.get('/', async (req, res) => {
+// @desc    Get all todos for logged-in user (created by them OR assigned to them)
+// @access  Private
+router.get('/', protect, async (req, res) => {
   try {
-    const todos = await Todo.find().sort({ createdAt: -1 });
+    // Find todos where user is either the creator OR in the assignedTo array
+    const todos = await Todo.find({
+      $or: [
+        { userId: req.user._id },
+        { assignedTo: req.user._id }
+      ]
+    })
+      .populate('assignedTo', 'username')
+      .populate('userId', 'username')
+      .sort({ createdAt: -1 });
     res.json({
       success: true,
       count: todos.length,
@@ -23,8 +33,8 @@ router.get('/', async (req, res) => {
 
 // @route   GET /api/todos/:id
 // @desc    Get single todo
-// @access  Public
-router.get('/:id', async (req, res) => {
+// @access  Private
+router.get('/:id', protect, async (req, res) => {
   try {
     const todo = await Todo.findById(req.params.id);
 
@@ -32,6 +42,17 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({
         success: false,
         error: 'Todo not found',
+      });
+    }
+
+    // Check if todo belongs to user or is assigned to user
+    const isOwner = todo.userId.toString() === req.user._id.toString();
+    const isAssigned = todo.assignedTo && todo.assignedTo.some(userId => userId.toString() === req.user._id.toString());
+    
+    if (!isOwner && !isAssigned) {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to access this todo',
       });
     }
 
@@ -49,10 +70,13 @@ router.get('/:id', async (req, res) => {
 
 // @route   POST /api/todos
 // @desc    Create a new todo
-// @access  Public
-router.post('/', async (req, res) => {
+// @access  Private
+router.post('/', protect, async (req, res) => {
   try {
-    const todo = await Todo.create(req.body);
+    const todo = await Todo.create({
+      ...req.body,
+      userId: req.user._id,
+    });
 
     res.status(201).json({
       success: true,
@@ -76,13 +100,10 @@ router.post('/', async (req, res) => {
 
 // @route   PUT /api/todos/:id
 // @desc    Update a todo
-// @access  Public
-router.put('/:id', async (req, res) => {
+// @access  Private
+router.put('/:id', protect, async (req, res) => {
   try {
-    const todo = await Todo.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    });
+    let todo = await Todo.findById(req.params.id);
 
     if (!todo) {
       return res.status(404).json({
@@ -90,6 +111,22 @@ router.put('/:id', async (req, res) => {
         error: 'Todo not found',
       });
     }
+
+    // Check if todo belongs to user or is assigned to user
+    const isOwner = todo.userId.toString() === req.user._id.toString();
+    const isAssigned = todo.assignedTo && todo.assignedTo.some(userId => userId.toString() === req.user._id.toString());
+    
+    if (!isOwner && !isAssigned) {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to update this todo',
+      });
+    }
+
+    todo = await Todo.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    });
 
     res.json({
       success: true,
@@ -105,10 +142,10 @@ router.put('/:id', async (req, res) => {
 
 // @route   DELETE /api/todos/:id
 // @desc    Delete a todo
-// @access  Public
-router.delete('/:id', async (req, res) => {
+// @access  Private
+router.delete('/:id', protect, async (req, res) => {
   try {
-    const todo = await Todo.findByIdAndDelete(req.params.id);
+    const todo = await Todo.findById(req.params.id);
 
     if (!todo) {
       return res.status(404).json({
@@ -116,6 +153,16 @@ router.delete('/:id', async (req, res) => {
         error: 'Todo not found',
       });
     }
+
+    // Check if todo belongs to user
+    if (todo.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to delete this todo',
+      });
+    }
+
+    await Todo.findByIdAndDelete(req.params.id);
 
     res.json({
       success: true,
