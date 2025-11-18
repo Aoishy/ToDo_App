@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { io, Socket } from 'socket.io-client'
 
 interface Message {
   _id: string
@@ -38,9 +39,11 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
   const [allUsers, setAllUsers] = useState<Array<{ _id: string; username: string }>>([])
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const socketRef = useRef<Socket | null>(null)
   const { user, token } = useAuth()
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL?.replace('/todos', '') || 'http://localhost:5000/api'
+  const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:5000'
 
   // Generate consistent color for username
   const getUsernameColor = (username: string) => {
@@ -156,7 +159,7 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
 
       if (data.success) {
         setNewMessage('')
-        fetchMessages()
+        // Don't fetch messages - Socket.IO will handle it
       } else {
         setError('Failed to send message')
       }
@@ -245,13 +248,64 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  // Fetch messages on mount and set interval for auto-refresh
+  // Fetch messages on mount and set up Socket.IO
   useEffect(() => {
     fetchMessages()
     fetchTeams()
-    const interval = setInterval(fetchMessages, 3000) // Refresh every 3 seconds
-    return () => clearInterval(interval)
+
+    // Initialize Socket.IO connection
+    socketRef.current = io(SOCKET_URL)
+
+    console.log('Socket.IO connected')
+
+    // Cleanup on unmount
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect()
+      }
+    }
+  }, [])
+
+  // Handle Socket.IO message listener based on selectedTeam
+  useEffect(() => {
+    if (!socketRef.current) return
+
+    // Remove previous listener
+    socketRef.current.off('newMessage')
+
+    // Add new listener for current chat
+    socketRef.current.on('newMessage', (message: Message) => {
+      console.log('Received message:', message)
+      // Only add message if it's for the current chat
+      const messageTeamId = message.teamId || null
+      const currentTeamId = selectedTeam || null
+      
+      if (messageTeamId === currentTeamId) {
+        setMessages((prevMessages) => [...prevMessages, message])
+      }
+    })
   }, [selectedTeam])
+
+  // Handle team switching
+  useEffect(() => {
+    fetchMessages()
+
+    // Join/leave team rooms
+    if (socketRef.current) {
+      // Leave all team rooms first
+      teams.forEach(team => {
+        socketRef.current?.emit('leaveTeam', team._id)
+      })
+
+      // Join current team room if selected
+      if (selectedTeam) {
+        socketRef.current.emit('joinTeam', selectedTeam)
+        console.log('Joined team:', selectedTeam)
+      } else {
+        console.log('In general chat')
+      }
+    }
+  }, [selectedTeam, teams])
 
   // Scroll to bottom when messages change
   useEffect(() => {

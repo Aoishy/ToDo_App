@@ -37,6 +37,20 @@ router.post('/', protect, async (req, res) => {
       teamId: req.body.teamId || null, // null = general chat
     });
 
+    // Convert to plain object for Socket.IO
+    const messageData = message.toObject();
+
+    // Emit message via Socket.IO
+    if (req.body.teamId) {
+      // Emit to specific team room
+      console.log(`Emitting to team-${req.body.teamId}:`, messageData);
+      req.io.to(`team-${req.body.teamId}`).emit('newMessage', messageData);
+    } else {
+      // Emit to general chat (all connected clients)
+      console.log('Emitting to general chat:', messageData);
+      req.io.emit('newMessage', messageData);
+    }
+
     res.status(201).json({
       success: true,
       data: message,
