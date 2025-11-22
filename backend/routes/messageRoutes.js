@@ -33,6 +33,7 @@ router.post('/', protect, async (req, res) => {
   try {
     const message = await Message.create({
       username: req.user.username,
+      userId: req.user.id,
       message: req.body.message,
       teamId: req.body.teamId || null, // null = general chat
     });

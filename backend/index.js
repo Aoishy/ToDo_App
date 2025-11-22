@@ -9,6 +9,7 @@ const authRoutes = require('./routes/authRoutes');
 const messageRoutes = require('./routes/messageRoutes');
 const userRoutes = require('./routes/userRoutes');
 const teamRoutes = require('./routes/teamRoutes');
+const projectRoutes = require('./routes/projectRoutes');
 
 // Load environment variables
 dotenv.config();
@@ -60,6 +61,7 @@ app.use('/api/todos', todoRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/teams', teamRoutes);
+app.use('/api/projects', projectRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -81,6 +83,28 @@ server.listen(PORT, () => {
 io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
 
+  // User comes online
+  socket.on('userOnline', async (userId) => {
+    try {
+      const User = require('./models/User');
+      await User.findByIdAndUpdate(userId, {
+        isOnline: true,
+        lastSeen: new Date(),
+        socketId: socket.id,
+      });
+      
+      // Broadcast to all clients
+      io.emit('userStatusChanged', { 
+        userId, 
+        isOnline: true 
+      });
+      
+      console.log(`User ${userId} is now online`);
+    } catch (error) {
+      console.error('Error setting user online:', error);
+    }
+  });
+
   // Join team room
   socket.on('joinTeam', (teamId) => {
     if (teamId) {
@@ -97,7 +121,47 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {
+  // Join project room
+  socket.on('joinProject', (projectId) => {
+    if (projectId) {
+      socket.join(`project-${projectId}`);
+      console.log(`Socket ${socket.id} joined project-${projectId}`);
+    }
+  });
+
+  // Leave project room
+  socket.on('leaveProject', (projectId) => {
+    if (projectId) {
+      socket.leave(`project-${projectId}`);
+      console.log(`Socket ${socket.id} left project-${projectId}`);
+    }
+  });
+
+  socket.on('disconnect', async () => {
     console.log('Client disconnected:', socket.id);
+    
+    // Set user offline
+    try {
+      const User = require('./models/User');
+      const user = await User.findOne({ socketId: socket.id });
+      if (user) {
+        await User.findByIdAndUpdate(user._id, {
+          isOnline: false,
+          lastSeen: new Date(),
+          socketId: null,
+        });
+        
+        // Broadcast to all clients
+        io.emit('userStatusChanged', { 
+          userId: user._id, 
+          isOnline: false,
+          lastSeen: new Date()
+        });
+        
+        console.log(`User ${user._id} is now offline`);
+      }
+    } catch (error) {
+      console.error('Error setting user offline:', error);
+    }
   });
 });

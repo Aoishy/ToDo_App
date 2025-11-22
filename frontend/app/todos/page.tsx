@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '../context/AuthContext'
 import TimePicker from './TimePicker'
 import ChatBox from './ChatBox'
 import styles from './todos.module.css'
+import { io, Socket } from 'socket.io-client'
 
 interface Todo {
   _id: string
@@ -31,6 +32,8 @@ export default function TodosPage() {
   const [submitting, setSubmitting] = useState(false)
   const [filter, setFilter] = useState<'all' | 'completed' | 'pending'>('all')
   const [chatOpen, setChatOpen] = useState(false)
+  const [hasNewMessage, setHasNewMessage] = useState(false)
+  const backgroundSocketRef = useRef<Socket | null>(null)
   
   const { user, token, logout, isAuthenticated } = useAuth()
   const router = useRouter()
@@ -167,6 +170,34 @@ export default function TodosPage() {
     fetchTodos()
   }, [])
 
+  // Setup background Socket.IO connection to listen for messages when chat is closed
+  useEffect(() => {
+    const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:5000'
+    
+    // Only connect if user is authenticated
+    if (!user?.id) return
+
+    // Create background socket connection
+    backgroundSocketRef.current = io(SOCKET_URL)
+
+    // Listen for new messages
+    backgroundSocketRef.current.on('newMessage', (message: any) => {
+      // Only auto-open if chat is currently closed and message is from someone else
+      if (!chatOpen && message.username !== user.username) {
+        console.log('New message received while chat closed, opening chat...')
+        setHasNewMessage(true)
+        setChatOpen(true)
+      }
+    })
+
+    // Cleanup on unmount
+    return () => {
+      if (backgroundSocketRef.current) {
+        backgroundSocketRef.current.disconnect()
+      }
+    }
+  }, [user?.id, user?.username, chatOpen])
+
   return (
     <div className={styles.todosContainer}>
       {/* Header */}
@@ -177,6 +208,12 @@ export default function TodosPage() {
             {user && <p className="text-sm text-gray-600 mt-1">Welcome, {user.username}!</p>}
           </div>
           <div className="flex gap-3">
+            <Link
+              href="/projects"
+              className="px-4 py-2 bg-gradient-to-r from-green-600 to-teal-600 text-white rounded-lg hover:shadow-lg transition font-medium"
+            >
+              📋 Projects
+            </Link>
             <Link
               href="/todos/assign"
               className="px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:shadow-lg transition font-medium"
@@ -418,13 +455,21 @@ export default function TodosPage() {
       {/* Floating Chat Button */}
       {!chatOpen && (
         <button
-          onClick={() => setChatOpen(true)}
-          className="fixed bottom-6 right-6 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 rounded-full shadow-2xl hover:shadow-xl transform hover:scale-110 transition-all duration-300 z-40"
+          onClick={() => {
+            setChatOpen(true)
+            setHasNewMessage(false)
+          }}
+          className={`fixed bottom-6 right-6 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 rounded-full shadow-2xl hover:shadow-xl transform hover:scale-110 transition-all duration-300 z-40 ${
+            hasNewMessage ? 'animate-bounce' : ''
+          }`}
           title="Open Chat"
         >
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
           </svg>
+          {hasNewMessage && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full animate-pulse border-2 border-white"></span>
+          )}
         </button>
       )}
 

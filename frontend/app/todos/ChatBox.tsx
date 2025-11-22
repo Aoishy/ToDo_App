@@ -7,6 +7,7 @@ import { io, Socket } from 'socket.io-client'
 interface Message {
   _id: string
   username: string
+  userId: string
   message: string
   createdAt: string
   teamId?: string | null
@@ -38,6 +39,7 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
   const [teamDescription, setTeamDescription] = useState('')
   const [allUsers, setAllUsers] = useState<Array<{ _id: string; username: string }>>([])
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
+  const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set())
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const socketRef = useRef<Socket | null>(null)
   const { user, token } = useAuth()
@@ -132,6 +134,25 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
       }
     } catch (err) {
       console.error('Failed to fetch users:', err)
+    }
+  }
+
+  // Fetch online users
+  const fetchOnlineUsers = async () => {
+    try {
+      const response = await fetch(`${API_URL}/users/online`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+      const data = await response.json()
+
+      if (data.success) {
+        const onlineUserIds = new Set<string>(data.data.map((u: { _id: string }) => u._id))
+        setOnlineUsers(onlineUserIds)
+      }
+    } catch (err) {
+      console.error('Failed to fetch online users:', err)
     }
   }
 
@@ -252,11 +273,32 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
   useEffect(() => {
     fetchMessages()
     fetchTeams()
+    fetchOnlineUsers() // Fetch initial online users
 
     // Initialize Socket.IO connection
     socketRef.current = io(SOCKET_URL)
 
     console.log('Socket.IO connected')
+
+    // Emit user online status
+    if (user?.id) {
+      socketRef.current.emit('userOnline', user.id)
+    }
+
+    // Listen for user status changes
+    socketRef.current.on('userStatusChanged', ({ userId, isOnline }: { userId: string; isOnline: boolean }) => {
+      console.log('User status changed:', userId, isOnline)
+      setOnlineUsers((prev) => {
+        const updated = new Set(prev)
+        if (isOnline) {
+          updated.add(userId)
+        } else {
+          updated.delete(userId)
+        }
+        console.log('Online users count:', updated.size)
+        return updated
+      })
+    })
 
     // Cleanup on unmount
     return () => {
@@ -388,20 +430,44 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
         {/* Team Info */}
         {selectedTeam && getCurrentTeam() && (
           <div className="mt-2 pt-2 border-t border-white/20">
-            <p className="text-xs text-white/80">
-              {getCurrentTeam()?.members.length} members
+            <div className="flex items-center justify-between text-xs text-white/80 mb-2">
+              <div className="flex items-center gap-2">
+                <span>{getCurrentTeam()?.members.length} members</span>
+                <span className="text-white/60">•</span>
+                <span className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></span>
+                  {onlineUsers.size} online
+                </span>
+              </div>
               {isTeamCreator() && (
                 <button
                   onClick={() => {
                     setShowAddMembers(true)
                     fetchUsers()
                   }}
-                  className="ml-2 text-xs underline hover:text-white"
+                  className="text-xs underline hover:text-white"
                 >
                   + Add
                 </button>
               )}
-            </p>
+            </div>
+            {/* Member List */}
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {getCurrentTeam()?.members.map((member) => (
+                <div
+                  key={member._id}
+                  className="flex items-center gap-1 px-2 py-1 bg-white/10 rounded-full"
+                  title={onlineUsers.has(member._id) ? 'Online' : 'Offline'}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      onlineUsers.has(member._id) ? 'bg-green-400' : 'bg-gray-400'
+                    }`}
+                  />
+                  <span className="text-xs text-white/90">{member.username}</span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -418,6 +484,9 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
         ) : (
           messages.map((msg) => {
             const isCurrentUser = msg.username === user?.username
+            // Check if the message sender is online using their userId
+            const isOnline = msg.userId && onlineUsers.has(msg.userId)
+            
             return (
               <div
                 key={msg._id}
@@ -430,9 +499,17 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
                       : 'bg-white text-gray-800 border border-gray-200'
                   }`}
                 >
-                  <p className={`text-xs font-semibold mb-1 ${isCurrentUser ? 'text-purple-100' : getUsernameColor(msg.username)}`}>
-                    {msg.username}
-                  </p>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <p className={`text-xs font-semibold ${isCurrentUser ? 'text-purple-100' : getUsernameColor(msg.username)}`}>
+                      {msg.username}
+                    </p>
+                    {!isCurrentUser && (
+                      <span 
+                        className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-gray-400'}`}
+                        title={isOnline ? 'Online' : 'Offline'}
+                      />
+                    )}
+                  </div>
                   <p className="text-sm break-words">{msg.message}</p>
                   <p className={`text-xs mt-1 ${isCurrentUser ? 'text-purple-200' : 'text-gray-500'}`}>
                     {new Date(msg.createdAt).toLocaleTimeString('en-US', {
@@ -559,6 +636,12 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
                         }
                       }}
                       className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                    />
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        onlineUsers.has(u._id) ? 'bg-green-500' : 'bg-gray-400'
+                      }`}
+                      title={onlineUsers.has(u._id) ? 'Online' : 'Offline'}
                     />
                     <span className="text-sm text-gray-700">{u.username}</span>
                   </label>

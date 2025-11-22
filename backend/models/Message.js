@@ -7,6 +7,11 @@ const messageSchema = new mongoose.Schema(
       required: [true, 'Username is required'],
       trim: true,
     },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
     message: {
       type: String,
       required: [true, 'Message is required'],
