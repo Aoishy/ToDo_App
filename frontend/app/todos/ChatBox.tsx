@@ -24,9 +24,10 @@ interface Team {
 
 interface ChatBoxProps {
   onClose: () => void
+  onUnreadCountChange?: (count: number) => void
 }
 
-export default function ChatBox({ onClose }: ChatBoxProps) {
+export default function ChatBox({ onClose, onUnreadCountChange }: ChatBoxProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [teams, setTeams] = useState<Team[]>([])
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null) // null = general chat
@@ -40,6 +41,7 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
   const [allUsers, setAllUsers] = useState<Array<{ _id: string; username: string }>>([])
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set())
+  const [unreadCount, setUnreadCount] = useState<number>(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const socketRef = useRef<Socket | null>(null)
   const { user, token } = useAuth()
@@ -153,6 +155,54 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
       }
     } catch (err) {
       console.error('Failed to fetch online users:', err)
+    }
+  }
+
+  // Mark messages as read
+  const markMessagesAsRead = async () => {
+    try {
+      console.log('Marking messages as read for team:', selectedTeam)
+      const response = await fetch(`${API_URL}/messages/mark-read`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ teamId: selectedTeam }),
+      })
+      const data = await response.json()
+      console.log('Mark as read response:', data)
+      // Update unread count
+      fetchUnreadCount()
+    } catch (err) {
+      console.error('Failed to mark messages as read:', err)
+    }
+  }
+
+  // Fetch unread message count
+  const fetchUnreadCount = async () => {
+    try {
+      // Always fetch total unread count across ALL chats
+      const url = `${API_URL}/messages/unread/count`
+      
+      console.log('Fetching unread count from:', url)
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+      const data = await response.json()
+      console.log('Unread count response:', data)
+
+      if (data.success) {
+        setUnreadCount(data.count)
+        // Notify parent component
+        if (onUnreadCountChange) {
+          onUnreadCountChange(data.count)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch unread count:', err)
     }
   }
 
@@ -274,6 +324,7 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
     fetchMessages()
     fetchTeams()
     fetchOnlineUsers() // Fetch initial online users
+    fetchUnreadCount() // Fetch initial unread count
 
     // Initialize Socket.IO connection
     socketRef.current = io(SOCKET_URL)
@@ -325,12 +376,24 @@ export default function ChatBox({ onClose }: ChatBoxProps) {
       if (messageTeamId === currentTeamId) {
         setMessages((prevMessages) => [...prevMessages, message])
       }
+      
+      // Update unread count when new message arrives
+      fetchUnreadCount()
+    })
+
+    // Listen for messages being marked as read
+    socketRef.current.on('messagesRead', (data: any) => {
+      console.log('Messages marked as read event:', data)
+      // Update unread count when messages are read
+      fetchUnreadCount()
     })
   }, [selectedTeam])
 
   // Handle team switching
   useEffect(() => {
     fetchMessages()
+    markMessagesAsRead() // Mark messages as read when viewing chat
+    fetchUnreadCount() // Update unread count
 
     // Join/leave team rooms
     if (socketRef.current) {

@@ -33,6 +33,7 @@ export default function TodosPage() {
   const [filter, setFilter] = useState<'all' | 'completed' | 'pending'>('all')
   const [chatOpen, setChatOpen] = useState(false)
   const [hasNewMessage, setHasNewMessage] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
   const backgroundSocketRef = useRef<Socket | null>(null)
   
   const { user, token, logout, isAuthenticated } = useAuth()
@@ -47,6 +48,30 @@ export default function TodosPage() {
 
   // Get API URL from environment variable
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/todos'
+  const BASE_API_URL = API_URL.replace('/todos', '')
+
+  // Fetch unread message count
+  const fetchUnreadCount = async () => {
+    if (!token) return
+    
+    try {
+      console.log('Fetching unread count from todos page')
+      const response = await fetch(`${BASE_API_URL}/messages/unread/count`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+      const data = await response.json()
+      console.log('Unread count from todos page:', data)
+      
+      if (data.success) {
+        setUnreadCount(data.count)
+        setHasNewMessage(data.count > 0)
+      }
+    } catch (err) {
+      console.error('Failed to fetch unread count:', err)
+    }
+  }
 
   // Fetch todos from backend
   const fetchTodos = async () => {
@@ -168,35 +193,74 @@ export default function TodosPage() {
   // Fetch todos on component mount
   useEffect(() => {
     fetchTodos()
+    fetchUnreadCount()
   }, [])
 
-  // Setup background Socket.IO connection to listen for messages when chat is closed
+  // Setup background Socket.IO connection to listen for messages
   useEffect(() => {
     const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:5000'
     
     // Only connect if user is authenticated
-    if (!user?.id) return
+    if (!user?.id || !token) return
 
     // Create background socket connection
     backgroundSocketRef.current = io(SOCKET_URL)
 
+    console.log('Socket.IO connected for background messages')
+
+    // Fetch user's teams and join all team rooms
+    const joinAllTeamRooms = async () => {
+      try {
+        const response = await fetch(`${BASE_API_URL}/teams`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        })
+        const data = await response.json()
+
+        if (data.success && backgroundSocketRef.current) {
+          console.log('Joining team rooms:', data.data.length)
+          // Join all team rooms
+          data.data.forEach((team: any) => {
+            backgroundSocketRef.current?.emit('joinTeam', team._id)
+            console.log('Joined team room:', team.name, team._id)
+          })
+        }
+      } catch (err) {
+        console.error('Failed to join team rooms:', err)
+      }
+    }
+
+    joinAllTeamRooms()
+
     // Listen for new messages
     backgroundSocketRef.current.on('newMessage', (message: any) => {
-      // Only auto-open if chat is currently closed and message is from someone else
-      if (!chatOpen && message.username !== user.username) {
-        console.log('New message received while chat closed, opening chat...')
+      console.log('Background socket received new message:', message)
+      // Update unread count
+      fetchUnreadCount()
+      
+      // Show notification indicator
+      if (message.username !== user.username) {
+        console.log('New message from another user, showing notification')
         setHasNewMessage(true)
-        setChatOpen(true)
       }
+    })
+
+    // Listen for messages being marked as read
+    backgroundSocketRef.current.on('messagesRead', (data: any) => {
+      console.log('Messages marked as read:', data)
+      // Update unread count when messages are read
+      fetchUnreadCount()
     })
 
     // Cleanup on unmount
     return () => {
       if (backgroundSocketRef.current) {
+        console.log('Disconnecting background socket')
         backgroundSocketRef.current.disconnect()
       }
     }
-  }, [user?.id, user?.username, chatOpen])
+  }, [user?.id, token])
 
   return (
     <div className={styles.todosContainer}>
@@ -458,6 +522,7 @@ export default function TodosPage() {
           onClick={() => {
             setChatOpen(true)
             setHasNewMessage(false)
+            fetchUnreadCount() // Refresh count when opening chat
           }}
           className={`fixed bottom-6 right-6 bg-gradient-to-r from-purple-600 to-blue-600 text-white p-4 rounded-full shadow-2xl hover:shadow-xl transform hover:scale-110 transition-all duration-300 z-40 ${
             hasNewMessage ? 'animate-bounce' : ''
@@ -467,14 +532,27 @@ export default function TodosPage() {
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
           </svg>
-          {hasNewMessage && (
-            <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full animate-pulse border-2 border-white"></span>
+          {unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[20px] h-5 bg-red-500 rounded-full flex items-center justify-center text-xs font-bold border-2 border-white px-1">
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
           )}
         </button>
       )}
 
       {/* Chat Box */}
-      {chatOpen && <ChatBox onClose={() => setChatOpen(false)} />}
+      {chatOpen && (
+        <ChatBox 
+          onClose={() => {
+            setChatOpen(false)
+            fetchUnreadCount() // Refresh count when closing chat
+          }}
+          onUnreadCountChange={(count) => {
+            setUnreadCount(count)
+            setHasNewMessage(count > 0)
+          }}
+        />
+      )}
     </div>
   )
 }

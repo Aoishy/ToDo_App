@@ -23,6 +23,10 @@ const messageSchema = new mongoose.Schema(
       ref: 'Team',
       default: null, // null means general chat
     },
+    readBy: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    }],
   },
   {
     timestamps: true,
